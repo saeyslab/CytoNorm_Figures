@@ -1,0 +1,101 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Load the required libraries
+
+```{r}
+suppressPackageStartupMessages(library(flowCore))
+suppressPackageStartupMessages(library(flowWorkspace))
+```
+
+Choose the files of interest
+
+```{r}
+dir <- "../data/Gates_ExtraControls"
+
+wsp_file <- "manual.wsp"
+fcs_files <- list.files(dir, pattern="Gates_P.*fcs$")
+```
+
+Choose the gates of interest as final cell labels
+
+```{r}
+cell_types <- c("Naive CD4+ T cells" = "CD4+ T cells/CD45RA+ naive T cells",
+                "Memory CD4+ T cells" = "CD4+ T cells/CD45RA- mem T cells",
+                "TCRgd T cells" = "TCRgd T cells",
+                "Naive CD8+ T cells" = "CD8+ T cells/CD45RA+ naive T cells",
+                "Memory CD8+ T cells" = "CD8+ T cells/CD45RA- mem T cells",
+                "NK cells" = "CD7+CD3-NKcells",
+                "B cells" = "B cells",
+                "Macrophages" = "lin-CD14+CD11b+CD33+MCs",
+                "pDCs" = "pDCs",
+                "CD66+CD45-" = "CD66+CD45-")
+```
+
+Parse the flowjo workspace
+
+```{r}
+wsp <- flowWorkspace::openWorkspace(file.path(dir, wsp_file))
+o <- capture.output(
+    gates <- suppressMessages(flowWorkspace::parseWorkspace(wsp, 
+                                                            "All Samples", 
+                                                            sampNloc = "sampleNode"))
+)
+files_in_wsp <- gates@data@origSampleVector
+counts <- as.numeric(gsub(".*_([0-9]*)$", "\\1", files_in_wsp))
+```
+
+
+Extract the manual gating for every file
+
+```{r}
+result <- list()
+for(file in fcs_files){
+  print(paste0("Processing ", file))
+  
+  file_id <- grep(gsub(".*/", "", file), files_in_wsp)
+  if(length(file_id) == 0) {stop("File not found. Files available: ",
+                                 gsub("_[0-9]*$", "\n", files_in_wsp))}
+  
+  # Build a matrix with TRUE/FALSE values for every cell / gate combination
+  gate_names <- flowWorkspace::getNodes(gates[[file_id]], path = "auto")
+  gating_matrix <- matrix(FALSE,
+                         nrow = counts[file_id],
+                         ncol = length(gate_names),
+                         dimnames = list(NULL, gate_names))
+  for (gate in gate_names) {
+    gating_matrix[, gate] <- flowWorkspace::getIndiceMat(gates[[file_id]],
+                                                        gate)
+  }
+  
+  # Build one vector with an individual label for every cell
+  manual_vector <- rep("Unknown",nrow(gating_matrix))
+  for(cell_type in cell_types){
+    manual_vector[gating_matrix[,cell_type]] <- cell_type
+  }
+  manual_vector <- factor(manual_vector, levels=c("Unknown",cell_types))
+  
+  # Rename to prettier names than in the FlowJo workspace
+  levels(manual_vector) <- c("Unknown", names(cell_types))
+  col_ids <- sapply(cell_types, 
+                    function(x) { which(colnames(gating_matrix) == x) } )
+  colnames(gating_matrix)[col_ids] <- names(cell_types)
+  
+  result[[file]] <- list(matrix = gating_matrix,
+                         manual = manual_vector)
+  
+}
+```
+
+Save results for later use
+
+```{r}
+saveRDS(result,
+        "../data/Gates_ExtraControls/manual.RDS")
+```
+
+```{r}
+sessionInfo()
+```
