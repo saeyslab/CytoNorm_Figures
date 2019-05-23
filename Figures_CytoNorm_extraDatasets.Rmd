@@ -1,9 +1,9 @@
 ---
-title: "Figures CytofNorm Paper - extra datasets"
+title: "Figures CytoNorm Paper - extra datasets"
 output: html_notebook
 ---
 
-# Figures CytofNorm Paper - extra datasets
+# Figures CytoNorm Paper - extra datasets
 
 ## Setup
 
@@ -18,7 +18,7 @@ suppressPackageStartupMessages(library(ggridges))
 suppressPackageStartupMessages(library(gridExtra))
 suppressPackageStartupMessages(library(pheatmap))
 suppressPackageStartupMessages(library(FlowSOM))
-suppressPackageStartupMessages(library(CytofNorm))
+suppressPackageStartupMessages(library(CytoNorm))
 ```
 
 Directory to save results to
@@ -82,7 +82,6 @@ print(marker_names[surface_markers])
 ```
 
 Load the manual mapping of the data.  
-See ExtractManualGating_CytofNorm.R file to generate the RDS file.
 ```{r}
 load(manual_file)
 cell_types <- c("All", levels(manual_list[[1]])[-1])
@@ -91,7 +90,7 @@ print(cell_types)
 
 ## Run normalization on the samples
 
-### CytofNorm normalization
+### CytoNorm normalization
 
 Training
 
@@ -100,7 +99,7 @@ train_data <- df %>%
   dplyr::filter(Stim == "IFNa_LPS")
   
 t <- system.time(capture.output(
-  model <- CytofNorm.train(files = file.path(dir, 
+  model <- CytoNorm.train(files = file.path(dir, 
                                              train_data$File),
                            labels = train_data$Plate,
                            channels = names(marker_names)[surface_markers],
@@ -117,24 +116,24 @@ t <- system.time(capture.output(
 print(t)
 saveRDS(model,
         file = file.path(results,
-                         paste0(dataset, "_CytofNorm.rds")))
+                         paste0(dataset, "_CytoNorm.rds")))
 ```
 
 Normalization
 
 ```{r}
 model <- readRDS(file.path(results,
-                             paste0(dataset, "_CytofNorm.rds")))
+                             paste0(dataset, "_CytoNorm.rds")))
 test_data <- df %>% 
   dplyr::filter(Stim == "Unstim")
   
 t <- system.time(capture.output(
-  CytofNorm.normalize(model = model,
+  CytoNorm.normalize(model = model,
                       files = file.path(dir, test_data$File),
                       labels = test_data$Plate,
                       transformList = transformList,
                       transformList.reverse = transformList.reverse,
-                      outputDir = paste0("CytofNorm_ExtraDatasets_", dataset),
+                      outputDir = paste0("CytoNorm_ExtraDatasets_", dataset),
                       normMethod.normalize = QuantileNorm.normalize)))
 print(t)
 ```
@@ -195,7 +194,7 @@ print(t)
 
 ```{r}
 methods <- c("Original", 
-             "CytofNorm",  
+             "CytoNorm",  
              "QuantileNorm", 
              "MinMaxNorm")
 

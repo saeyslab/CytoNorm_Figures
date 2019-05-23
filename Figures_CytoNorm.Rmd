@@ -1,9 +1,13 @@
 ---
-title: "Figures CytofNorm Paper"
+title: "Figures CytoNorm Paper"
 output: html_notebook
 ---
 
-# Figures CytofNorm Paper
+# Figures CytoNorm Paper
+
+```{r}
+devtools::install_github("saeyslab/CytoNorm")
+```
 
 ## Setup
 
@@ -18,7 +22,7 @@ suppressPackageStartupMessages(library(ggridges))
 suppressPackageStartupMessages(library(gridExtra))
 suppressPackageStartupMessages(library(pheatmap))
 suppressPackageStartupMessages(library(FlowSOM))
-suppressPackageStartupMessages(library(CytofNorm))
+suppressPackageStartupMessages(library(CytoNorm))
 ```
 
 Directory to save results to
@@ -68,7 +72,7 @@ print(marker_names[norm_markers])
 ```
 
 Load the manual mapping of the data.  
-See ExtractManualGating_CytofNorm.R file to generate the RDS file.
+See ExtractManualGating_CytoNorm.R file to generate the RDS file.
 ```{r}
 manual <- readRDS("../data/Gates_ExtraControls/manual.RDS")
 cell_types <- c("All", levels(manual[[1]]$manual)[-1])
@@ -470,7 +474,7 @@ mean(apply(pctgs[-1, ], 1, max))
 
 ## Run normalization on the samples
 
-### CytofNorm normalization
+### CytoNorm normalization
 
 Experiment setup
 
@@ -502,7 +506,7 @@ for(exp in rownames(exp_setups)){
   normMethod.train <- norm_methods[[exp_setups[exp, "method"]]][["normMethod.train"]]
   normParams <- norm_methods[[exp_setups[exp, "method"]]][["normParams"]]
   t <- system.time(capture.output(
-    model <- CytofNorm.train(files = file.path(dir, 
+    model <- CytoNorm.train(files = file.path(dir, 
                                                train_data$File),
                              labels = train_data$Plate,
                              channels = names(marker_names)[norm_markers],
@@ -515,10 +519,10 @@ for(exp in rownames(exp_setups)){
                              normParams = normParams,
                              seed = 1)))
   
-  print(t)
+   print(t)
   saveRDS(model,
           file = file.path(results,
-                           paste0("GatesExtraControls_CytofNorm_", exp, ".rds")))
+                           paste0("GatesExtraControls_CytoNorm_", exp, ".rds")))
 }
 ```
 
@@ -528,18 +532,18 @@ Normalization - Time approx. 420s per exp
 for(exp in rownames(exp_setups)){
   print(paste0("Normalizing ", exp))
   model <- readRDS(file.path(results,
-                             paste0("GatesExtraControls_CytofNorm_", exp, ".rds")))
+                             paste0("GatesExtraControls_CytoNorm_", exp, ".rds")))
   test_data <- df %>% 
     dplyr::filter(Stim == exp_setups[exp, "stim"])
   
   normMethod.normalize <- norm_methods[[exp_setups[exp, "method"]]][["normMethod.normalize"]]
   t <- system.time(capture.output(
-    CytofNorm.normalize(model = model,
+    CytoNorm.normalize(model = model,
                         files = file.path(dir, test_data$File),
                         labels = test_data$Plate,
                         transformList = transformList,
                         transformList.reverse = transformList.reverse,
-                        outputDir = paste0("CytofNorm_", exp),
+                        outputDir = paste0("CytoNorm_", exp),
                         normMethod.normalize = normMethod.normalize)))
   print(t)
 }
@@ -631,8 +635,8 @@ for(exp in rownames(exp_setups)){
 
 ```{r}
 exp_setups <- expand.grid(method = c("Original",
-                                     "CytofNorm_Quantile",
-                                     "CytofNorm_MinMax",
+                                     "CytoNorm_Quantile",
+                                     "CytoNorm_MinMax",
                                      "QuantileNorm",
                                      "MinMaxNorm"),
                           volunteer = c(1,2),
@@ -769,14 +773,14 @@ plot_emds <- function(exp_1, exp_2, emds_g, title = NULL, subtitle = NULL){
 
 # Figure 4
 ```{r}
-plot_emds("CytofNorm_Quantile_1_Unstim", 
+plot_emds("CytoNorm_Quantile_1_Unstim", 
           "Original_1_Unstim",
           emds_g)
 ```
 
 ```{r}
 wilcox.test(emds$Original_1_Unstim, 
-            emds$CytofNorm_Quantile_1_Unstim,
+            emds$CytoNorm_Quantile_1_Unstim,
             paired = TRUE)
 ```
 
@@ -794,11 +798,11 @@ dev.off()
 ### Figure 5
 
 ```{r, fig.width = 12}
-p1 <- plot_emds("CytofNorm_Quantile_1_Unstim", 
+p1 <- plot_emds("CytoNorm_Quantile_1_Unstim", 
                "QuantileNorm_1_Unstim",
                emds_g)
 
-p2 <- plot_emds("CytofNorm_MinMax_1_Unstim", 
+p2 <- plot_emds("CytoNorm_MinMax_1_Unstim", 
           "MinMaxNorm_1_Unstim",
           emds_g)
 grid.arrange(p1, p2, nrow = 1)
@@ -820,18 +824,18 @@ pheatmap::pheatmap(t(emds_g[, #rownames(emds_g)[order(emds_g[,"Original_1_Unstim
                                "MinMaxNorm_2_Unstim",
                                "MinMaxNorm_1_IFNa_LPS",
                                "MinMaxNorm_2_IFNa_LPS",
-                               "CytofNorm_MinMax_1_Unstim",
-                               "CytofNorm_MinMax_2_Unstim",
-                               "CytofNorm_MinMax_1_IFNa_LPS",
-                               "CytofNorm_MinMax_2_IFNa_LPS",
+                               "CytoNorm_MinMax_1_Unstim",
+                               "CytoNorm_MinMax_2_Unstim",
+                               "CytoNorm_MinMax_1_IFNa_LPS",
+                               "CytoNorm_MinMax_2_IFNa_LPS",
                                "QuantileNorm_1_Unstim",
                                "QuantileNorm_2_Unstim",
                                "QuantileNorm_1_IFNa_LPS",
                                "QuantileNorm_2_IFNa_LPS",
-                               "CytofNorm_Quantile_1_Unstim",
-                               "CytofNorm_Quantile_2_Unstim",
-                               "CytofNorm_Quantile_1_IFNa_LPS",
-                               "CytofNorm_Quantile_2_IFNa_LPS")]),
+                               "CytoNorm_Quantile_1_Unstim",
+                               "CytoNorm_Quantile_2_Unstim",
+                               "CytoNorm_Quantile_1_IFNa_LPS",
+                               "CytoNorm_Quantile_2_IFNa_LPS")]),
                    cluster_cols = FALSE,
                    cluster_rows = FALSE,
                    annotation_col = col_annotation)
@@ -843,7 +847,7 @@ pheatmap::pheatmap(t(emds_g[, #rownames(emds_g)[order(emds_g[,"Original_1_Unstim
 ## Quantile distribution after normalization
 
 ```{r}
-norm_dirs <- paste0("CytofNorm_", c(2,1)[df$Volunteer], "_", df$Stim, "_Quantile")
+norm_dirs <- paste0("CytoNorm_", c(2,1)[df$Volunteer], "_", df$Stim, "_Quantile")
 names(norm_dirs) <- df$File
 
 quantile_values <-  c(0.05, 0.25, 0.5, 0.75, 0.95)
@@ -996,7 +1000,7 @@ do.call(grid.arrange, c(plots, list(nrow = 2)))
 ### Normalize using the model trained on a different stimulation
 
 ```{r}
-exp_setups <- expand.grid(method = c("CytofNorm_Quantile"),
+exp_setups <- expand.grid(method = c("CytoNorm_Quantile"),
                           volunteer = 1,
                           stim = c("Unstim", "IFNa_LPS"))
 rownames(exp_setups) <- apply(exp_setups, 1, paste, collapse = "_")
@@ -1012,7 +1016,7 @@ exp_setups
 for(exp in rownames(exp_setups)[1:4]){
   print(paste0("Normalizing ", exp))
   model <- readRDS(file.path(results,
-                             paste0("GatesExtraControls_CytofNorm_", exp, ".rds")))
+                             paste0("GatesExtraControls_CytoNorm_", exp, ".rds")))
   test_data <- df %>% 
     dplyr::filter(Volunteer != exp_setups[exp, "volunteer"])
     dplyr::filter(Stim != exp_setups[exp, "stim"])
@@ -1020,12 +1024,12 @@ for(exp in rownames(exp_setups)[1:4]){
   
   normMethod.normalize <- norm_methods[[exp_setups[exp, "method"]]][["normMethod.normalize"]]
   t <- system.time(capture.output(
-    CytofNorm.normalize(model = model,
+    CytoNorm.normalize(model = model,
                         files = file.path(dir, test_data$File),
                         labels = test_data$Plate,
                         transformList = transformList,
                         transformList.reverse = transformList.reverse,
-                        outputDir = paste0("CytofNorm_", exp),
+                        outputDir = paste0("CytoNorm_", exp),
                         normMethod.normalize = normMethod.normalize)))
   print(t)
 }
@@ -1066,7 +1070,7 @@ for(volunteer in c("1","2")){
     dplyr::filter(Volunteer == volunteer)
   
   t <- system.time(capture.output(
-    model <- CytofNorm.train(files = file.path(dir, 
+    model <- CytoNorm.train(files = file.path(dir, 
                                                train_data$File),
                              labels = train_data$Plate,
                              channels = names(marker_names)[norm_markers],
@@ -1083,24 +1087,24 @@ for(volunteer in c("1","2")){
   print(t)
   saveRDS(model,
           file = file.path(results,
-                           paste0("GatesExtraControls_CytofNorm_", volunteer, "_Both_Quantile.rds")))
+                           paste0("GatesExtraControls_CytoNorm_", volunteer, "_Both_Quantile.rds")))
 }
 ```
 
 ```{r}
 model <- readRDS(file.path(results,
-                            paste0("GatesExtraControls_CytofNorm_1_Both_Quantile.rds")))
+                            paste0("GatesExtraControls_CytoNorm_1_Both_Quantile.rds")))
 
 test_data <- df %>% 
   dplyr::filter(Volunteer == 2)
 
 t <- system.time(capture.output(
-  CytofNorm.normalize(model = model,
+  CytoNorm.normalize(model = model,
                       files = file.path(dir, test_data$File),
                       labels = test_data$Plate,
                       transformList = transformList,
                       transformList.reverse = transformList.reverse,
-                      outputDir = paste0("CytofNorm_1_Both_Quantile"),
+                      outputDir = paste0("CytoNorm_1_Both_Quantile"),
                       normMethod.normalize = QuantileNorm.normalize)))
 print(t)
 ```
@@ -1114,7 +1118,7 @@ for (stim in c("Unstim", "IFNa_LPS")) {
     dplyr::filter(Stim == stim)
   
   o <- capture.output(suppressWarnings(
-    emds_both_stim[[stim]] <- emdEvaluation(file.path("CytofNorm_1_Both_Quantile", 
+    emds_both_stim[[stim]] <- emdEvaluation(file.path("CytoNorm_1_Both_Quantile", 
                                                       paste0("Norm_",
                                                              toEvaluate$File)),
                                  transformList = transformList,
@@ -1142,13 +1146,13 @@ rownames(emds_all_stim_g) <- paste0(emds_all_stim_g[,1], "_", get_markers(ff, em
 
 ```{r fig.width = 12, fig.height = 8}
 
-p1 <- plot_emds("CytofNorm_Quantile_1_Unstim",
+p1 <- plot_emds("CytoNorm_Quantile_1_Unstim",
                 "Original_1_Unstim",
                 emds_all_stim_g,
                 title = "Unstimulated samples V2",
                 subtitle = "trained on unstimulated samples V1")
 
-p2 <- plot_emds("Other_stimCytofNorm_Quantile_1_IFNa_LPS",
+p2 <- plot_emds("Other_stimCytoNorm_Quantile_1_IFNa_LPS",
                 "Original_1_Unstim",
                 emds_all_stim_g,
                 title = "Unstimulated samples V2",
@@ -1160,13 +1164,13 @@ p3 <- plot_emds("Both_stimUnstim",
                 title = "Unstimulated samples V2",
                 subtitle = "trained on all samples V1")
 
-p4 <- plot_emds("Other_stimCytofNorm_Quantile_1_Unstim",
+p4 <- plot_emds("Other_stimCytoNorm_Quantile_1_Unstim",
                 "Original_1_IFNa_LPS",
                 emds_all_stim_g,
                 title = "Stimulated samples V2",
                 subtitle = "trained on unstimulated samples V1")
 
-p5 <- plot_emds("CytofNorm_Quantile_1_IFNa_LPS",
+p5 <- plot_emds("CytoNorm_Quantile_1_IFNa_LPS",
                 "Original_1_IFNa_LPS",
                 emds_all_stim_g,
                 title = "Stimulated samples V2",
@@ -1282,7 +1286,7 @@ lines(0:10, table(same_label[["o"]]), col = "black")
 lines(0:10, table(same_label[["q"]]), col = "blue")
 lines(0:10, table(same_label[["n"]]), col = "red")
 legend("topright", 
-       legend = c("Original", "Quantile normalization", "CytofNorm normalization"), 
+       legend = c("Original", "Quantile normalization", "CytoNorm normalization"), 
        col = c("black", "blue", "red"),
        lwd = 2)
 
@@ -1292,7 +1296,7 @@ lines(0:10, table(same_file[["o"]]), col = "black")
 lines(0:10, table(same_file[["q"]]), col = "blue")
 lines(0:10, table(same_file[["n"]]), col = "red")
 legend("topright", 
-       legend = c("Original", "Quantile normalization", "CytofNorm normalization"), 
+       legend = c("Original", "Quantile normalization", "CytoNorm normalization"), 
        col = c("black", "blue", "red"),
        lwd = 2)
 ```
@@ -1335,7 +1339,7 @@ fs_o <- transform(fs_o, transformList)
 pData(fs_o) <- cbind(pData(fs_o), df[rownames(pData(fs_o)), ])
 
 suppressMessages(o <- capture.output(
-  fs_n <- read.ncdfFlowSet(file.path("CytofNorm_1_Unstim_Quantile", 
+  fs_n <- read.ncdfFlowSet(file.path("CytoNorm_1_Unstim_Quantile", 
                                      paste0("Norm_", files_to_plot$File)))))
 fs_n <- fsApply(fs_n, function(ff){ ff[sample(nrow(ff), 10000), ]})
 fs_n <- transform(fs_n, transformList)
@@ -1375,7 +1379,7 @@ fs_orig <- read.ncdfFlowSet(file.path(dir,
                                       test_data$File))
 fs_orig <- transform(fs_orig, transformList)
 
-fs_norm <- read.ncdfFlowSet(file.path("CytofNorm_1_IFNa_LPS_Quantile", 
+fs_norm <- read.ncdfFlowSet(file.path("CytoNorm_1_IFNa_LPS_Quantile", 
                                       paste0("Norm_",test_data$File)))
 fs_norm <- transform(fs_norm, transformList)
 ```

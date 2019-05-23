@@ -16,7 +16,7 @@ param2 <- (floor(taskID / 5)) + 1
 
 library(flowCore)
 library(FlowSOM)
-library(CytofNorm)
+library(CytoNorm)
 
 #########################
 ## Set some parameters ##
@@ -85,7 +85,7 @@ for(nClus in c(55,65,75)){
     for(i in 1:3){
       # Learn the splines
       t_train <- system.time(capture.output(
-        normModel <- CytofNorm.train(files = file.path(dir, train_files),
+        normModel <- CytoNorm.train(files = file.path(dir, train_files),
                                      labels = train_labels,
                                      channels = names(marker_names)[norm_markers],
                                      transformList = transform_list,
@@ -99,7 +99,7 @@ for(nClus in c(55,65,75)){
       ))
       # Normalize the data
       t_norm <- system.time(capture.output(
-        CytofNorm.normalize(normModel,
+        CytoNorm.normalize(normModel,
                             files= file.path(dir, test_files),
                             labels = test_labels,
                             transformList = transform_list,

@@ -1,7 +1,7 @@
 #!/bin/bash
 #$ -l h_vmem=10G
 #$ -t 1-25
-#$ -N CytofNorm
+#$ -N CytoNorm
 module unload gcc
 export LD_LIBRARY_PATH="/software/shared/apps/x86_64/gcc/4.8.0/lib/:/software/shared/apps/x86_64/gcc/4.8.0/lib64:$LD_LIBRARY_PATH"
 module load R/x86_64/3.5.1
