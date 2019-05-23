@@ -764,8 +764,9 @@ plot_emds <- function(exp_1, exp_2, emds_g, title = NULL, subtitle = NULL){
     ggplot2::geom_abline(lwd = 1.5) +
     coord_fixed() +
     ggtitle(title, subtitle) +
-    theme(plot.subtitle = element_text(hjust = 0.5)) +
-    theme_minimal()
+    theme_minimal() +
+    theme(plot.subtitle = element_text(hjust = 0.5),
+          legend.position = "none") 
   emds_g$affected <- NULL
   return(p)
 }
@@ -786,12 +787,35 @@ wilcox.test(emds$Original_1_Unstim,
 
 ### Supplementary figure 5
 ```{r}
-pdf("emd_vs_original.pdf",
-    width = 6, height = 4)
-for(exp in rownames(exp_setups)){
-  exp_original <- gsub(".*_([12].*)", "Original_\\1", exp)
-  print(plot_emds(exp, exp_original, emds_g))
+methods <- c("CytoNorm_Quantile",
+             "CytoNorm_MinMax",
+             "QuantileNorm",
+             "MinMaxNorm")
+plots <- lapply(c("", methods), function(x){
+  p <- ggplot() + 
+    annotate("text", x = 4, y = 25, size=7, label = x) + 
+    theme_void()})
+for(stim in c("Unstim", "IFNa_LPS")){
+  for(volunteer in c(1,2)){
+    plots[[length(plots)+1]] <- ggplot() + 
+      annotate("text", x = 4, y = 25, size=7, 
+               label = paste0("Volunteer ", volunteer, "\n",
+                              c("Unstimulated", "Stimulated")[1+(stim == "IFNa_LPS")])) + 
+      theme_void()
+    for(method in methods){
+      print(paste0(method, "_", volunteer, "_", stim))
+      plots[[length(plots)+1]] <- plot_emds(paste0(method, "_", volunteer, "_", stim), 
+                                            paste0("Original_", volunteer, "_", stim),
+                                            emds_g)
+
+    }
+  }
 }
+pdf("emd_vs_original.pdf",
+    width = 22, height = 16)
+do.call(grid.arrange, c(plots, list(ncol = length(methods)+1,
+                                    heights = c(1, rep(5, length(methods))),
+                                    widths = c(2, rep(5, length(methods))))))
 dev.off()
 ```
 
@@ -800,11 +824,19 @@ dev.off()
 ```{r, fig.width = 12}
 p1 <- plot_emds("CytoNorm_Quantile_1_Unstim", 
                "QuantileNorm_1_Unstim",
-               emds_g)
+               emds_g) +
+  xlab("CytoNorm Quantile Normalization") +
+  ylab("Quantile Normalization") +
+  ggtitle(NULL, NULL) +
+  theme(axis.title=element_text(size=20))
 
 p2 <- plot_emds("CytoNorm_MinMax_1_Unstim", 
           "MinMaxNorm_1_Unstim",
-          emds_g)
+          emds_g) +
+  xlab("CytoNorm MinMax Normalization") +
+  ylab("MinMax Normalization") +
+  ggtitle(NULL, NULL) +
+  theme(axis.title=element_text(size=20))
 grid.arrange(p1, p2, nrow = 1)
 ```
 

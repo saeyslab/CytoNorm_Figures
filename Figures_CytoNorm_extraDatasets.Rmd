@@ -237,7 +237,7 @@ emds_g <- cbind(emds_g[[1]][,c(1,2)],
                 do.call(cbind, lapply(emds_g, function(x) x[,3])))
 rownames(emds_g) <- paste0(emds_g[,1], "_", get_markers(ff, emds_g[,2]))
 
-
+methods <- c("CytoNorm", "QuantileNorm", "MinMaxNorm" )
 reduction <- list()
 for(method in methods){
   affected <- (emds_g[,method] > 2) | (emds_g[ ,"Original"] > 2)
@@ -262,8 +262,14 @@ print(reduction)
 ## Evaluation plots
 
 ```{r}
-plot_emds <- function(exp_1, exp_2, emds_g){
+plot_emds <- function(exp_1, exp_2, emds_g, title = NULL, subtitle = NULL){
   emds_g$affected <- emds_g[,exp_1] > 2 | emds_g[,exp_2] > 2
+  
+  if(is.null(title)){
+    title <- "Average change: "
+    subtitle <- paste0(round(reduction[exp_1, "mean"], 4), 
+                       " (±", round(reduction[exp_1, "sd"],4), ")")
+  }
   
   p <- ggplot(emds_g) +
     geom_point(aes_string(x = exp_1, 
@@ -277,10 +283,10 @@ plot_emds <- function(exp_1, exp_2, emds_g){
     scale_color_manual(values = c("FALSE" = "grey", "TRUE" = "black")) +
     ggplot2::geom_abline(lwd = 1.5) +
     coord_fixed() +
-    ggtitle("Average change: ", 
-            paste0(round(reduction[exp_1,"mean"], 4), " (±", round(reduction[exp_1,"sd"],4), ")")) +
-    theme(plot.subtitle = element_text(hjust = 0.5)) +
-    theme_minimal()
+    ggtitle(title, subtitle) +
+    theme_minimal() +
+    theme(plot.subtitle = element_text(hjust = 0.5),
+          legend.position = "none") 
   emds_g$affected <- NULL
   return(p)
 }
@@ -289,7 +295,7 @@ plot_emds <- function(exp_1, exp_2, emds_g){
 # Figure 8
 ```{r fig.width=12, fig.height = 4}
 plots <- list()
-for(method in methods[2:4]){
+for(method in methods){
   plots[[method]] <- plot_emds(method, 
                                "Original",
                                emds_g)
