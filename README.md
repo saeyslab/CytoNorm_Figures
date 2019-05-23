@@ -1,2 +1,2 @@
-# CytofNorm_Figures
-Scripts to replicate the figures reported in the CytofNorm publication. 
+# CytoNorm_Figures
+Scripts to replicate the figures reported in the CytoNorm publication. 
