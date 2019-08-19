@@ -1,0 +1,262 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Install libraries if not yet previously installed.
+Remove hash sign to actually run the lines.
+```{r}
+# install.packages("tidyverse")
+# install.packages("gridExtra")
+# install.packages("pheatmap")
+
+# install.packages("BiocManager")
+# BiocManager::install("flowCore")
+
+# install.packages("devtools")
+# devtools::install_github("saeyslab/FlowSOM")
+# devtools::install_github("saeyslab/CytoNorm")
+```
+
+## Setup
+
+Load the required libraries
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(gridExtra))
+suppressPackageStartupMessages(library(pheatmap))
+suppressPackageStartupMessages(library(flowCore))
+suppressPackageStartupMessages(library(FlowSOM))
+suppressPackageStartupMessages(library(CytoNorm))
+```
+
+Directory to save results to
+
+```{r}
+results <- "results_CytoNorm"
+if (!dir.exists(results)) dir.create(results)
+```
+
+Set the path to the data files and extract the metadata from the filenames.
+These files can be downloaded from flow repository dataset FR-FCM-Z247.
+
+```{r}
+dir <- "D:/Data/Ongoing/Stanford/data/Gates_ExtraControls"
+files <- list.files(dir, pattern="Gates_P.*Control.*fcs$")
+samples <- data.frame(File = files,
+                      Plate = as.factor(str_match(files, "(PTLG[0-9]*)")[, 2]),
+                      Stim = as.factor(str_match(files, "[0-9]_(.*)_Control")[, 2]),
+                      Volunteer = as.factor(str_match(files, "_([12]).")[, 2]),
+                 stringsAsFactors = FALSE)
+rownames(samples) <- samples$File
+samples
+```
+
+Read the marker names from the first file.  
+Identify the markers of interest, ordered alphabetically, surface markers first.
+```{r}
+o <- capture.output(ff <- read.FCS(file.path(dir, samples$File[1])))
+marker_names <- get_markers(ff, colnames(ff))
+
+norm_ids <- c(48, 46, 43, 45, 20, 16, 21, 19, 22, 50, 47, 40, 44, 33, 17,
+              11, 18, 51, 14, 23, 32, 10, 49, 27, 24, 31, 42, 37, 39, 34, 
+              41, 26, 30, 28, 29, 25, 35)
+norm_channels <- colnames(ff)[norm_ids]
+norm_markers <- marker_names[norm_ids]
+
+transformList <- transformList(norm_channels, cytofTransform)
+transformList.reverse <- transformList(norm_channels, cytofTransform.reverse)
+
+print(norm_markers)
+```
+
+Load the manual mapping of the data.  
+See ExtractManualGating_CytoNorm.R file to generate the RDS file or download
+from flowRepository.
+```{r}
+manual <- readRDS("D:/Data/Ongoing/Stanford/data/Gates_ExtraControls/manual.RDS")
+cell_types <- c("All", levels(manual[[1]]$manual)[-1])
+print(cell_types)
+```
+
+## Characterize the batch effects
+
+### Density overview
+
+```{r}
+# Functions which use global variables, only for use in this notebook!
+
+getDensities_plot <- function(densities, markers){
+  
+  densities <- lapply(densities, function(x){
+    x$File <-  gsub("Norm_", "", gsub(".*/", "", x$File))
+    x$Batch <- samples[x$File, "Plate"]
+    x$Volunteer_Stim <- paste0(samples[x$File, "Volunteer"],
+                                     "_",
+                                     samples[x$File, "Stim"])
+    x$Volunteer_Stim <- factor(x$Volunteer_Stim,
+                               levels = c("1_Unstim", "1_IFNa_LPS",
+                                          "2_Unstim", "2_IFNa_LPS"))
+    x
+  })
+  
+  plots <- list()
+  for(marker in markers){
+    p <- ggplot(dplyr::filter(densities$quantiles,
+                              Channel == FlowSOM::get_channels(ff, marker))) +
+      geom_vline(aes(xintercept = `0.05`), col = "grey", linetype="dashed") +
+      geom_vline(aes(xintercept = `0.25`), col = "grey") +
+      geom_vline(aes(xintercept = `0.5`), col = "#b30000", lwd = 1) +
+      geom_vline(aes(xintercept = `0.75`), col = "grey") +
+      geom_vline(aes(xintercept = `0.95`), col = "grey", linetype="dashed") +
+      geom_line(aes(x = x, y = y),
+                data = dplyr::filter(densities$densities,
+                              Channel == FlowSOM::get_channels(ff, marker))) +
+      facet_grid(Batch ~ Volunteer_Stim,
+                 switch="y") +
+      ggtitle(paste0(marker, " expression")) +
+      xlab("Control and validation samples included in every plate") +
+      ylab("Different plates") +
+      xlim(c(-0.5, 6)) +
+      theme_minimal() +
+      theme(axis.text.y = element_blank(),
+            strip.text.y = element_text(angle = 180))
+    
+    plots[[marker]] <- p
+  }
+  return(plots)
+}
+```
+
+```{r}
+res_file <- file.path(results, "densities_original.RDS")
+if(!file.exists(res_file)){
+  densities <- getDensities(files = file.path(dir, samples$File),
+                            channels = norm_channels,
+                            transformList = transformList,
+                            quantileValues =  c(0.05, 0.25, 0.5, 0.75, 0.95))
+  saveRDS(densities, res_file)
+} else {
+  densities <- readRDS(res_file)
+}
+```
+
+```{r}
+markers <- c("CD15", "CD66")
+plots <- getDensities_plot(densities,
+                           markers = c("CD15", "CD66"))
+
+p <- do.call(gridExtra::grid.arrange, c(plots, list(nrow = 1)))
+
+ggsave(p, 
+       filename = file.path(results,
+                            paste0("Density_original_",
+                                   paste(markers, collapse = "_"),".pdf")),
+       width = 14, height = 7)
+```
+
+
+```{r}
+correlations <- matrix(NA, 
+                       nrow = 2,
+                       ncol = length(norm_markers),
+                       dimnames = list(c("Unstim", "IFNa_LPS"),
+                                       norm_markers))
+for(channel in norm_channels){
+  subset <- densities$quantiles %>% 
+    dplyr::filter(Channel == channel) 
+  sample_types <- str_match(subset$File, "PTLG[0-9]*_(.*).fcs")[,2]
+  medians <- subset$`0.5`
+  correlations["Unstim", marker_names[channel]] <- cor(medians[sample_types == "Unstim_Control_1"],
+                                                       medians[sample_types == "Unstim_Control_2"])
+  correlations["IFNa_LPS", marker_names[channel]] <- cor(medians[sample_types == "IFNa_LPS_Control_1"],
+                                                           medians[sample_types == "IFNa_LPS_Control_2"])
+}
+
+apply(correlations, 1, mean)
+apply(correlations, 1, sd)
+```
+
+### Cell type specific densities
+
+```{r fig.width = 14, fig.height = 7 }
+cell_types_to_plot <- c("B cells", "Monocytes")
+marker <- "HLADR"
+
+res_file <- file.path(results, 
+                          paste0("densities_original_",
+                                 paste(cell_types_to_plot, collapse = "_"),
+                                 ".RDS"))
+if (!file.exists(res_file)) {
+  
+  densities_selected <- list()
+  
+  for (cell_type in cell_types_to_plot) {
+    cell_type_selection <- lapply(manual, function(x){
+      x$matrix[, cell_type]
+    })
+    
+    names(cell_type_selection) <- file.path(dir, names(cell_type_selection))
+    
+    densities_selected[[cell_type]] <- 
+      getDensities(files = file.path(dir, samples$File),
+                   channels = norm_channels,
+                   transformList = transformList,
+                   quantileValues =  c(0.05, 0.25, 0.5, 0.75, 0.95),
+                   selection = cell_type_selection)
+  }
+
+  saveRDS(densities_selected, res_file)
+} else {
+  densities_selected <- readRDS(res_file)
+}
+```
+
+```{r}
+plots <- list()
+for(cell_type in cell_types_to_plot){
+  p <- getDensities_plot(densities_selected[[cell_type]],
+                         marker)[[1]] + 
+       ggtitle(paste0(marker, " expression in ", cell_type)) +
+       xlim(c(2.5, 6))
+  
+  plots[[cell_type]] <- p
+}
+
+p <- do.call(gridExtra::grid.arrange, c(plots, list(nrow = 1)))
+
+ggsave(p, 
+       filename = file.path(results,
+                            paste0("Density_original_",
+                                   marker, "_",
+                                   paste(cell_types_to_plot, collapse = "_"),
+                                   ".pdf")),
+       width = 14, height = 7)
+              
+```
+
+
+BC densities for reviewer
+```{r}
+BC_channels <- colnames(ff)[grep("BC", get_markers(ff, colnames(ff)))]
+densities_BC <- getDensities(files = file.path(dir, samples$File),
+                             channels = BC_channels,
+                             transformList = transformList(BC_channels, 
+                                                           cytofTransform),
+                             quantileValues =  c(0.05, 0.25, 0.5, 0.75, 0.95))
+
+plots <- getDensities_plot(densities_BC,
+                           markers = get_markers(ff, BC_channels))
+
+p <- do.call(gridExtra::grid.arrange, c(plots, list(nrow = 2)))
+
+ggsave(p, 
+       filename = file.path(results,
+                            paste0("Density_original_",
+                                   paste(get_markers(ff, BC_channels), 
+                                         collapse = "_"),
+                                   ".pdf")),
+       width = 21, height = 14)
+
+```

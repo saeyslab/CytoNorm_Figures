@@ -1,0 +1,71 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# tSNE comparison 
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(flowCore))
+suppressPackageStartupMessages(library(FlowSOM))
+suppressPackageStartupMessages(library(CytoNorm))
+suppressPackageStartupMessages(library(flowWorkspace))
+suppressPackageStartupMessages(library(CytoML))
+```
+
+```{r}
+set.seed(1)
+
+data_agg <- list("Original"  = AggregateFlowFrames(validation_data$File, 11200),
+             "Normalized" = 
+               AggregateFlowFrames(
+                 file.path(norm_dir, paste0("Norm_", gsub(".*/", "", validation_data$File))),
+                 cTotal = 11200))
+```
+
+
+```{r}
+cols_of_interest <- c(48, 46, 43, 45, 20, 16, 21, 19, 22, 50, 47, 40, 44, 33, 17,
+                      11, 18, 51, 14, 23, 32, 10, 49, 27, 24, 31, 42, 37, 39, 34, 
+                      41, 26, 30, 28, 29, 25, 35)
+```
+
+```{r}
+data_agg_t <- lapply(data_agg, function(d){transform(d, transformList(colnames(d)[cols_of_interest],
+                                                                      cytofTransform))})
+```
+
+```{r}
+set.seed(1)
+
+dim_red <- list()
+for(d in names(data_agg)){
+  dim_red[[d]] <- Rtsne::Rtsne(data_agg[[d]]@exprs[, cols_of_interest],
+                                perplexity = 30)
+}
+```
+
+```{r fig.width = 15}
+set.seed(1)
+rand_order <- sample(nrow(data_agg$Original))
+
+plots <- list()
+for(d in names(data_agg)){
+  plots[[d]] <- ggplot(data.frame(x = dim_red[[d]]$Y[rand_order,1], 
+                                  y = dim_red[[d]]$Y[rand_order,2],
+                                  File = factor(data_agg[[d]]@exprs[rand_order,"File"]))) +
+    geom_point(aes(x, y, color = File), 
+               size = 1) + 
+    theme_minimal() +
+    ggtitle(d) +
+    theme(legend.position = "none")
+}
+
+p <- do.call(gridExtra::grid.arrange, c(plots, list(ncol = 2)))
+
+ggsave(file.path(results, "tSNE_patients_before_after.pdf"),
+       p,
+       width = 10, height = 5)
+
+```

@@ -1,0 +1,444 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This notebook assumes you have run the setup part of
+1_data_exploration_of_control_and_validation_samples.Rmd first,
+as it makes use of variables created in that notebook.
+
+
+## Evaluation of the FlowSOM clustering
+
+```{r}
+train_files <- samples %>% 
+  dplyr::filter(Volunteer == 1) %>% 
+  dplyr::filter(Stim == "Unstim") %>%
+  dplyr::pull(File)
+```
+
+```{r}
+res_file <- file.path(results, "prepareFlowSOM.RDS")
+if (!file.exists(res_file)) {
+  fsom <- prepareFlowSOM(file.path(dir, train_files),
+                         norm_channels,
+                         nCells = 1000000,
+                         FlowSOM.params = list(xdim = 15,
+                                               ydim = 15,
+                                               nClus = 25,
+                                               scale = FALSE),
+                         transformList = transformList,
+                         plot = TRUE,
+                         seed = 1)
+  saveRDS(fsom, file.path(results, "prepareFlowSOM.RDS"))
+} else {
+  fsom <- readRDS(res_file)
+}
+```
+
+```{r}
+# Test different amounts of metaclusters
+pdf(file.path(results, "CV_test.pdf"),
+    width = 11, height = 7)
+cv_test <- testCV(fsom,
+                  cluster_values = 3:50,
+                  plot = TRUE,
+                  verbose = TRUE)
+dev.off()
+
+cv_test$cvs$`25`
+```
+
+## Run normalization on the samples
+
+### CytoNorm normalization
+
+Experiment setup
+
+```{r}
+FlowSOM.params <- list(nCells = 1000000,
+                       xdim = 15,
+                       ydim = 15,
+                       nClus = 25,
+                       scale = FALSE)
+
+norm.params <- list("QuantileNormLimited" = list(nQ = 101,
+                                                 limit = c(0,8),
+                                                 goal = "PTLG021"),
+                    
+                    "QuantileNorm" = list(nQ = 101,
+                                          goal = "PTLG021"),
+                    
+                    "MinMaxNorm" = list(nQ = 2,
+                                        quantile_values = c(0, 1),
+                                        goal = "PTLG021"),
+
+                    "QMinMaxNorm" = list(nQ = 2,
+                                         quantile_values = c(0.001, 0.999),
+                                         goal = "PTLG021"))
+
+exp_setups <- expand.grid(clustering = c("Cluster", ""),
+                          norm = names(norm.params),
+                          stim = c("Unstim_and_IFNa_LPS"),
+                          volunteer = c(1,2))
+
+rownames(exp_setups) <- gsub("^_", "", 
+                             apply(exp_setups, 1, paste, collapse = "_"))
+exp_setups
+```
+
+Setup for testing control samples with different ranges
+```{r}
+FlowSOM.params <- list(nCells = 1000000,
+                       xdim = 15,
+                       ydim = 15,
+                       nClus = 25,
+                       scale = FALSE)
+
+norm.params <- list("QuantileNormLimited" = list(nQ = 101,
+                                                 limit = c(0,8),
+                                                 goal = "PTLG021"))
+
+exp_setups <- expand.grid(clustering = c("Cluster"),
+                          norm = names(norm.params),
+                          stim = c("Unstim_and_IFNa_LPS", "Unstim", "IFNa_LPS"),
+                          volunteer = c(1,2))
+
+rownames(exp_setups) <- gsub("^_", "", 
+                             apply(exp_setups, 1, paste, collapse = "_"))
+
+exp_setups
+```
+
+Training 
+
+```{r}
+if(!dir.exists(file.path(results, "models")))
+  dir.create(file.path(results, "models"))
+
+if(file.exists(file.path(results, "models", "times.rds"))){
+  times <- readRDS(file.path(results, "models", "times.rds"))
+} else {
+  times <- list()
+}
+
+for(exp in rownames(exp_setups)){
+  if(!dir.exists(file.path(results, "models", exp))){
+    dir.create(file.path(results, "models", exp))
+  }
+  print(paste0("Training ", exp))
+  train_data <- samples %>% 
+    dplyr::filter(Volunteer == exp_setups[exp, "volunteer"]) %>% 
+    dplyr::filter(grepl(gsub("_and_", "|",exp_setups[exp, "stim"]), Stim))
+  
+  if(exp_setups[exp, "clustering"] == "Cluster"){
+    
+    t <- system.time(capture.output(
+      model <- CytoNorm.train(files = file.path(dir, 
+                                                train_data$File),
+                              labels = train_data$Plate,
+                              channels = norm_channels,
+                              transformList = transformList,
+                              FlowSOM.params = FlowSOM.params,
+                              normMethod.train = QuantileNorm.train,
+                              normParams = norm.params[[exp_setups[exp, "norm"]]],
+                              seed = 1,
+                              outputDir = file.path(results, "models", exp),
+                              plot = TRUE)))
+  } else {
+    t <- system.time(capture.output(
+      model <- do.call(QuantileNorm.train,
+                       c(list(files = file.path(dir, 
+                                                train_data$File),
+                              labels = train_data$Plate,
+                              channels = norm_channels,
+                              transformList = transformList,
+                              plot = TRUE),
+                         norm.params[[exp_setups[exp, "norm"]]]))))
+    
+  }
+  
+  print(t)
+  times[[exp]] <- t
+  saveRDS(times,
+          file = file.path(results,
+                           "models",
+                           "times.rds"))
+  saveRDS(model,
+          file = file.path(results,
+                           "models",
+                           exp,
+                           "GatesExtraControls_model.rds"))
+  
+}
+```
+
+Normalization
+
+```{r}
+dir.create(file.path(results, "data"))
+
+for(exp in rownames(exp_setups)){
+  dir.create(file.path(results, "data", exp))
+  print(paste0("Normalizing ", exp))
+  model <- readRDS(file.path(results,
+                             "models",
+                             exp,
+                             "GatesExtraControls_model.rds"))
+  test_data <- samples %>% 
+    dplyr::filter(Volunteer != exp_setups[exp, "volunteer"])
+  
+  if(exp_setups[exp, "clustering"] == "Cluster"){
+    
+    t <- system.time(capture.output(
+      CytoNorm.normalize(model = model,
+                         files = file.path(dir, test_data$File),
+                         labels = test_data$Plate,
+                         transformList = transformList,
+                         transformList.reverse = transformList.reverse,
+                         outputDir = file.path(results, "data", exp),
+                         normMethod.normalize = QuantileNorm.normalize)))
+  } else { 
+    
+    t <- system.time(capture.output(
+      QuantileNorm.normalize(model = model,
+                             files = file.path(dir, test_data$File),
+                             labels = test_data$Plate,
+                             transformList = transformList,
+                             transformList.reverse = transformList.reverse,
+                             outputDir = file.path(results, "data", exp))))
+    
+  }
+  print(t)
+}
+```
+
+```{r}
+emds <- list()
+
+for(volunteer in c(1,2)){
+  for(stim in c("Unstim", "IFNa_LPS")){
+    print(paste0("Evaluating original"))
+    toEvaluate <- samples %>% 
+      dplyr::filter(Volunteer != volunteer) %>% 
+      dplyr::filter(Stim == stim)
+    
+    o <- capture.output(
+      emds[[paste0("Original_", volunteer, "_", stim)]] <- 
+        emdEvaluation(file.path(dir,
+                                toEvaluate$File),
+                      transformList = transformList,
+                      manual = lapply(manual, function(x){x$manual}),
+                      channels = norm_channels))
+  }
+}
+
+for (exp in rownames(exp_setups)) {
+  for(stim in c("Unstim", "IFNa_LPS")){
+    print(paste0("Evaluating ", exp))
+    toEvaluate <- samples %>% 
+      dplyr::filter(Volunteer != exp_setups[exp, "volunteer"]) %>% 
+      dplyr::filter(Stim == stim)
+    
+    o <- capture.output(
+      emds[[paste0(exp, "_", stim)]] <- emdEvaluation(file.path(results, "data", exp, 
+                                             paste0("Norm_",
+                                                    toEvaluate$File)),
+                                   transformList = transformList,
+                                   manual = lapply(manual, function(x){x$manual}),
+                                   channels = norm_channels))
+  }
+}
+
+saveRDS(emds,
+        file = file.path(results, paste0("emds_diff_methods.Rds")))
+```
+
+```{r}
+emds <- readRDS(file.path(results,
+                         "emds_diff_methods.Rds"))
+emds_g <- lapply(names(emds), function(state){
+  col_name <- paste0("EMD_",state)
+  gather(data.frame(Population = rownames(emds[[state]]), 
+                    emds[[state]])[-1,], 
+         "Channel", col_name, -"Population")  %>% 
+    magrittr::set_colnames(c("Population", "Channel", col_name))
+}) %>% magrittr::set_names(names(emds))
+
+emds_g <- cbind(emds_g[[1]][,c(1,2)],
+                do.call(cbind, lapply(emds_g, function(x) x[,3])))
+rownames(emds_g) <- paste0(emds_g[,1], "_", get_markers(ff, emds_g[,2]))
+
+
+reduction <- list()
+for(exp in colnames(emds_g)[-c(1,2)]){
+  exp_original <- gsub(".*_([12].*)", "Original_\\1", exp)
+  affected <- (emds_g[,exp] > 2) | (emds_g[ ,exp_original] > 2)
+  reduction[[exp]] <- data.frame(population_marker = rownames(emds_g)[affected],
+                                 reduction = ((emds_g[,exp_original] - emds_g[,exp]) /
+                                                emds_g[,exp_original])[affected],
+                                 exp = exp,
+                                 method = gsub("_[12].*", "", exp),
+                                 subset = gsub("^.*_([12].*)", "\\1", exp))
+}
+reduction <- do.call(rbind, reduction)
+
+reduction_overall <- cbind("mean" = tapply(reduction$reduction, 
+                                         reduction$method, 
+                                         mean),
+                           "sd" = tapply(reduction$reduction,
+                                       reduction$method,
+                                       sd))
+for (volunteer in c(1,2)) {
+  for (stim in c("Unstim", "IFNa_LPS")) {
+    for(f in c("mean", "sd")){
+      subset <- reduction %>% 
+                 dplyr::filter(subset == paste0(volunteer, "_", stim)) 
+      reduction_subset <- tapply(subset$reduction, 
+                                 subset$method, 
+                                 eval(parse(text = f)))
+     
+      
+      reduction_overall <- cbind(reduction_overall,
+                                 matrix(reduction_subset,
+                                        dimnames = list(names(reduction_subset),
+                                                        paste0(volunteer, "_", stim, "_", f))))
+        
+    }
+
+  }
+}
+                           
+print(reduction_overall)
+paste0(round(reduction_overall[, grep("mean",colnames(reduction_overall))], 2),
+       " (+- ", 
+       round(reduction_overall[, grep("sd",colnames(reduction_overall))], 2),
+       ")")
+pheatmap::pheatmap(reduction_overall[-1, grep("_mean", colnames(reduction_overall))],
+                   cluster_rows = FALSE,
+                   cluster_cols = FALSE,
+                   display_numbers = TRUE,
+                   number_color = "white")
+```
+
+
+```{r}
+for(e in unique(reduction$exp)){
+ subset <- reduction %>% 
+   dplyr::filter(exp == e)
+ plot(density(subset$reduction), main = e)
+}
+```
+```{r}
+for (volunteer in c(1,2)) {
+  for (stim in c("Unstim", "IFNa_LPS")) {
+      subset <- reduction %>% 
+                 dplyr::filter(subset == paste0(volunteer, "_", stim)) 
+      reduction_subset <- tapply(subset$reduction, 
+                                 subset$method, 
+                                 eval(parse(text = f)))
+     
+      
+      reduction_overall <- cbind(reduction_overall,
+                                 matrix(reduction_subset,
+                                        dimnames = list(names(reduction_subset),
+                                                        paste0(volunteer, "_", stim, "_", f))))
+        
+  }
+  
+}
+
+  
+```
+
+```{r}
+plot_emds <- function(exp_1, exp_2, emds_g, title = NULL, subtitle = NULL){
+  emds_g$affected <- rep("Positive", nrow(emds_g))
+  emds_g$affected[emds_g[,exp_1] > emds_g[,exp_2]] <- "Negative"
+  emds_g$affected[emds_g[,exp_1] < 2 & emds_g[,exp_2] < 2] <- "No"
+  
+  if(is.null(title)){
+    method <- stringr::str_match(exp_1, "(.*)_([1-2].*)")[,2]
+    subset <- stringr::str_match(exp_1, "(.*)_([1-2].*)")[,3]
+    title <- "Average change: "
+    subtitle <- paste0(round(reduction_overall[method, paste0(subset,"_mean")], 4), 
+                       " (±", round(reduction_overall[method, paste0(subset,"_sd")],4), ")")
+  }
+  
+  p <- ggplot(emds_g) +
+    geom_point(aes_string(x = exp_1, 
+                          y = exp_2, 
+                          col = "affected")) +
+    geom_rect(data = data.frame(xmin = 0, xmax = 2, ymin = 0, ymax = 2),
+              aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+              fill = "#555555", alpha = 0.3) +
+    scale_x_continuous(limits = c(0, 15)) +
+    scale_y_continuous(limits = c(0, 15)) +
+    scale_color_manual(values = c("No" = "grey", 
+                                  "Positive" = "black", 
+                                  "Negative" = "#b30000")) +
+    ggplot2::geom_abline(lwd = 1.5) +
+    coord_fixed() +
+    ggtitle(title, subtitle) +
+    theme_minimal() +
+    theme(plot.subtitle = element_text(hjust = 0.5),
+          legend.position = "none") 
+  emds_g$affected <- NULL
+  return(p)
+}
+```
+
+```{r}
+
+plots <- list()
+for (test in c("Unstim", "IFNa_LPS")) {
+  for (model in c("Unstim_and_IFNa_LPS", "Unstim", "IFNa_LPS")){
+    plots[[paste0(model,"_",test)]] <- plot_emds(paste0("Cluster_QuantileNormLimited_", model, "_1_", test),
+                                                 "Original_1_Unstim",
+                                                 emds_g) +
+      xlab("EMD after normalization") +
+      ylab("EMD before normalization") +
+      ggtitle(paste0("Trained on ", gsub("_and_", " and ", model)), 
+              subtitle = paste0("Validated on ", test)) + 
+      theme(plot.title = element_text(size = 11),
+            plot.subtitle = element_text(size = 11))
+  }
+}
+
+p <- do.call(grid.arrange, c(plots, list(nrow = 2)))
+ggsave(file.path(results,
+                 "EMD_Unstim_vs_IFNa_LPS.pdf"),
+       p,
+       width = 9, height = 6)
+p
+```
+
+```{r}
+plot_titles <- c(c("Cluster_QuantileNormLimited" = "Cluster + 101 quantiles",
+                   "QuantileNormLimited" = "101 quantiles",
+                   "Cluster_QMinMaxNorm" = "Cluster + 2 quantiles",
+                   "QMinMaxNorm" = "2 quantiles"))
+
+plots <- list()
+for (volunteer in c(1,2)){
+  for (test in c("Unstim", "IFNa_LPS")) {
+    for(method in c("Cluster_QuantileNormLimited", "QuantileNormLimited",
+                    "Cluster_QMinMaxNorm", "QMinMaxNorm")){
+      plots[[paste0(method,"_",volunteer,"_",test)]] <- plot_emds(paste0(method, "_Unstim_and_IFNa_LPS_", volunteer, "_", test),
+                                                   paste0("Original_",volunteer,"_", test),
+                                                   emds_g) +
+        xlab("EMD after normalization") +
+        ylab("EMD before normalization") +
+        ggtitle(plot_titles[method], 
+                subtitle = paste0("Validated on donor ", volunteer, " ", test)) + 
+        theme(plot.title = element_text(size = 11),
+              plot.subtitle = element_text(size = 11))
+    }
+  }
+}
+p <- do.call(grid.arrange, c(plots, list(nrow = 4)))
+ggsave(file.path(results,
+                 "EMD_methods.pdf"),
+       p,
+       width = 12, height = 12)
+```

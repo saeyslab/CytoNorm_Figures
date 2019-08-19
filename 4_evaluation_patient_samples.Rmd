@@ -1,0 +1,401 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Validation
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(flowCore))
+suppressPackageStartupMessages(library(CytoNorm))
+suppressPackageStartupMessages(library(flowWorkspace))
+suppressPackageStartupMessages(library(CytoML))
+```
+
+```{r}
+results <- "results_CytoNorm/validation_pregnancy"
+if(!dir.exists(results)) dir.create(results, recursive = TRUE)
+
+norm_dir <- file.path(results, "Normalized")
+if(!dir.exists(norm_dir)) dir.create(norm_dir)
+
+
+files <- c(list.files("D:/Data/Ongoing/Stanford/data/Gates", 
+                      pattern = "PTLG.*Unstim.*fcs$", 
+                      full.names = TRUE),
+           list.files("D:/Data/Ongoing/Stanford/data/Gates_ExtraControls", 
+                      pattern = "PTLG.*Unstim.*fcs$", 
+                      full.names = TRUE))
+files <- grep(paste0(".*", c("PTLG015", "PTLG016", "PTLG006", "PTLG014", "PTLG023"), "_[123BU]",
+                     collapse = "|"),
+              files, 
+              invert = TRUE,
+              value = TRUE) 
+files <- grep("Unstim_Control_2",
+              files,
+              invert = TRUE,
+              value = TRUE)
+
+df <- data.frame(File = files,
+                 Plate = as.factor(str_match(files, "(PTLG[0-9]*)")[, 2]),
+                 Timepoint = as.factor(gsub("Unstim", "Control", str_match(files, "PTLG[0-9]*[_Repeat_]*_([^_]*)")[, 2])),
+                 stringsAsFactors = FALSE)
+rownames(df) <- df$File
+
+repeat_ctrl_file <- "D:/Data/Ongoing/Stanford/data/Gates/Gates_PTLG015_016_Repeats_Unstim_Control.fcs"
+df[repeat_ctrl_file, c("Plate","Timepoint")] <- c("PTLG015", "Control") 
+head(df)
+```
+
+```{r}
+train_data <- df %>% 
+  dplyr::filter(Timepoint == "Control")
+
+o <- capture.output(ff <- read.FCS(file.path(train_data$File[1])))
+
+norm_markers <- c(48, 46, 43, 45, 20, 16, 21, 19, 22, 50, 47, 40, 44, 33, 17,
+                  11, 18, 51, 14, 23, 32, 10, 49, 27, 24, 31, 42, 37, 39, 34, 
+                  41, 26, 30, 28, 29, 25, 35)
+
+transformList <- transformList(colnames(ff)[norm_markers], 
+                               cytofTransform)
+transformList.reverse <- transformList(colnames(ff)[norm_markers], 
+                                       cytofTransform.reverse)
+```
+
+```{r}
+model <- CytoNorm.train(files = train_data$File,
+                        labels = train_data$Plate,
+                        channels = colnames(ff)[norm_markers],
+                        transformList = transformList,
+                        outputDir = results,
+                        FlowSOM.params = list(nCells = 1000000,
+                                              xdim = 15,
+                                              ydim = 15,
+                                              nClus = 5,
+                                              scale = FALSE),
+                        normMethod.train = QuantileNorm.train,
+                        normParams = list(nQ = 21,
+                                          goal = "PTLG001",
+                                          limit = c(0,8)),
+                        seed = 1,
+                        plot = TRUE,
+                        verbose = TRUE)
+                        
+saveRDS(model,
+        file.path(results, "CytoNorm_model_190812.RDS"))   
+```
+
+```{r}
+fsom <- readRDS(file.path(results,"CytoNorm_FlowSOM.RDS"))
+
+pdf(file.path(results, "cv_test.pdf"))
+cv_test <- testCV(fsom, cluster_values = c(5,10,15,20))
+dev.off()
+saveRDS(cv_test, file.path(results, "cv_test.RDS"))
+
+```
+
+```{r}
+validation_data <- df %>% 
+  dplyr::filter(Timepoint != "Control")
+
+validation_data$Cohort <- stringr::str_match(validation_data$File, 
+                                             "/(Gates[^/]*)/")[,2]
+
+rownames(validation_data) <- gsub(".*/", "", validation_data$File)
+
+validation_data$Plate[validation_data$Plate == "PTLG016"] <- "PTLG015"
+```
+
+```{r}
+CytoNorm.normalize(model = model,
+                   files = validation_data$File,
+                   labels = validation_data$Plate,
+                   transformList = transformList,
+                   transformList.reverse = transformList.reverse,
+                   outputDir = norm_dir,
+                   prefix = "Norm_",
+                   verbose = TRUE,
+                   normMethod.normalize = QuantileNorm.normalize)
+```
+
+```{r}
+freq_to_extract <- c("Bcells" = "Bcells", 
+                     "CD4+Tcells" = "CD4+Tcells",
+                     "CD4+Tcells_mem" = "CD4 mem T cells", 
+                     "CD4+Tcells_naive" = "CD4 naive T cells",
+                     "CD7+NKcells" = "CD7+NKcells",
+                     "CD8+Tcells" = "CD8a+Tcells",
+                     "CD8+Tcells_mem" = "CD8 mem T cells",
+                     "CD8+Tcells_naive" = "CD8 naive T cells",
+                     "TCRgd+Tcells" = "TCRgd+Tcells",
+                     "cMCs" = "cMCs",
+                     "mDCs" = "mDCs",
+                     "pDCs" = "pDCs")
+
+mfis_to_extract <- c("CREB", "ERK", "IkB", "MAPKAPK2", "NFkB", "p38", "S6", 
+                     "STAT1", "STAT3", "STAT5")
+mfis_feature_names <- apply(expand.grid(names(freq_to_extract), 
+                                        mfis_to_extract, 
+                                        "Unstim"), 
+                            1, paste, collapse = "_")
+```
+
+```{r}
+freq_file <- file.path(results, "validation_data_frequencies.RDS")
+
+if(! file.exists(freq_file)){
+
+  frequencies <- lapply(list(original = "original", 
+                             normalized = "normalized", 
+                             gaussNorm = "gaussNorm", 
+                             adapted = "adapted"),
+                        function(x){matrix(NA,
+                                           nrow = nrow(validation_data),
+                                           ncol = length(freq_to_extract),
+                                           dimnames = list(rownames(validation_data),
+                                                           names(freq_to_extract)))})
+  mfis <- lapply(list(original = "original", 
+                             normalized = "normalized", 
+                             gaussNorm = "gaussNorm", 
+                             adapted = "adapted"),
+                        function(x){matrix(NA,
+                                           nrow = nrow(validation_data),
+                                           ncol = length(freq_to_extract) * 
+                                             length(mfis_to_extract),
+                                           dimnames = list(rownames(validation_data),
+                                                           mfis_feature_names))})
+  
+  for(file in rownames(validation_data)[73:112]){
+    print(file)
+    file_path <- validation_data[file, "File"]
+    file_versions <- list("original" = file_path,
+                          "normalized" = file.path(norm_dir, 
+                                                   paste0("Norm_",  
+                                                          gsub(".*/", "", file_path))),
+                          "gaussNorm" = file.path("validation_Gates/GaussNorm/Normalized", 
+                                                  paste0("Norm_", 
+                                                         gsub(".*/", "", file_path))))
+    for(version in names(file_versions)){
+      fcs_path <- file_versions[[version]]
+      o <- capture.output(
+        gates <- suppressMessages(
+          CytoNorm::applyStaticGating(file.path(results,"Gates_PTLG001_Unstim_Control.wsp"),
+                                      fcs_path)))
+      
+      freqs_tmp <- colSums(gates)
+      freqs_tmp <- freqs_tmp / freqs_tmp["CD45+CD66-"]
+      frequencies[[version]][file, names(freq_to_extract)] <- freqs_tmp[freq_to_extract]
+      
+      ff <- transform(read.FCS(fcs_path), transformList)
+      for(pop in names(freq_to_extract)){
+        selection <- gates[, freq_to_extract[pop]]
+        if(sum(selection) > 0){
+          mfis_tmp <- apply(ff@exprs[selection, FlowSOM::get_channels(ff, mfis_to_extract), drop = FALSE],
+                            2, median)
+          mfis[[version]][file, paste(pop, mfis_to_extract, "Unstim", sep = "_")] <- mfis_tmp
+        }
+      }
+    }
+  }
+  saveRDS(frequencies, freq_file)
+  saveRDS(mfis, gsub("frequencies", "mfis", freq_file))
+} else {
+  frequencies <- readRDS(freq_file)
+  mfis <- readRDS(gsub("frequencies", "mfis", freq_file))
+}
+``` 
+
+
+
+```{r}
+validation_data <- readRDS(file.path(results, "validation_data.RDS"))
+load("C:/Users/sofievg/Downloads/Data_orig.Rda")
+
+rownames(validation_data) <- gsub("_Repeat", "", rownames(validation_data))
+frequencies <- lapply(frequencies, function(x){
+  rownames(x) <- gsub("_Repeat", "", rownames(x))
+  x
+})
+mfis <- lapply(mfis, function(x){
+  rownames(x) <- gsub("_Repeat", "", rownames(x))
+  x
+})
+
+```
+
+```{r}
+validation_data$weeks <- NA
+validation_data$adaptedValue <- NA
+
+files_meta_order <- paste0("Gates_", featurepatients, "_", names(featuretimes), "_Unstim.fcs")
+validation_data[files_meta_order, "weeks"] <- featureweeks
+frequencies[["adapted"]][files_meta_order, names(freq_to_extract)] <- freqfeatures[, names(freq_to_extract)]
+mfis[["adapted"]][files_meta_order, mfis_feature_names] <- mfifeatures[, mfis_feature_names]
+
+files_meta_order <- paste0("Gates_", v.featurepatients, "_", names(v.featuretimes), "_Unstim.fcs")
+validation_data[files_meta_order, "weeks"] <- v.featureweeks
+frequencies[["adapted"]][files_meta_order, names(freq_to_extract)] <- v.freqfeatures[, names(freq_to_extract)]
+mfis[["adapted"]][files_meta_order, mfis_feature_names] <- v.mfifeatures[, mfis_feature_names]
+
+
+validation_data$Timepoint <- factor(validation_data$Timepoint,
+                                    levels = c("Control", "BL", "1", "2", "3"))
+levels(validation_data$Timepoint) <- c("Control", 
+                                       "1st\nTrimester", 
+                                       "2nd\nTrimester", 
+                                       "3rd\nTrimester", 
+                                       "Post\nPartum")
+
+```
+
+```{r fig.width = 9, fig.height = 3}
+plot_titles <- c("original" = "Original fcs files",
+                 "gaussNorm" = "gaussNorm",
+                 "normalized" = "CytoNorm",
+                 "adapted" = "Manually adapted gates")
+
+plots <- list()
+for(type in c("original", "gaussNorm", "normalized", "adapted")){ # 
+  p <- ggplot(data.frame(validation_data,
+                         frequencies[[type]],
+                         mfis[[type]],
+                         check.names = FALSE)) +
+    geom_boxplot(aes(x = Timepoint, y = `CD4+Tcells_naive_STAT5_Unstim`)) +
+    geom_jitter(aes(x = Timepoint, y = `CD4+Tcells_naive_STAT5_Unstim`, col = Cohort), 
+                width = 0.2, height = 0) +
+    ggtitle(plot_titles[type]) +
+    ylab("STAT5 MFI of CD4+ Naive T cells") +
+    ylim(c(0,1)) +
+    theme_minimal() +
+    theme(legend.position = "none")
+  
+  plots[[length(plots)+1]] <- p
+}
+
+p_mfi <- do.call(gridExtra::grid.arrange, 
+             c(plots,
+               list(nrow = 1)))
+
+ggsave(plot = p_mfi, 
+       filename = file.path(results, "validation_CD4+Tcells_naive_STAT5_Unstim.pdf"),
+       width = 12, height = 3)
+```
+
+```{r}
+plots <- list()
+for(type in c("original", "gaussNorm", "normalized", "adapted")){ # 
+  p <- ggplot(data.frame(validation_data,
+                         frequencies[[type]],
+                         mfis[[type]],
+                         check.names = FALSE)) +
+    geom_boxplot(aes(x = Timepoint, y = `CD4+Tcells_naive`)) +
+    geom_jitter(aes(x = Timepoint, y = `CD4+Tcells_naive`, col = Cohort), 
+                width = 0.2, height = 0) +
+    ggtitle(plot_titles[type]) +
+    ylab("CD4+ Naive T cells frequency") +
+    ylim(c(0,1)) +
+    theme_minimal() +
+    theme(legend.position = "none")
+  
+  plots[[length(plots)+1]] <- p
+}
+
+p <- do.call(gridExtra::grid.arrange, 
+             c(plots,
+               list(nrow = 1)))
+
+ggsave(plot = p, 
+       filename = file.path(results, "validation_CD4+Tcells_naive_Unstim.pdf"),
+       width = 10, height = 3)
+```
+
+
+
+
+```{r fig.height = 3, fig.width = 12}
+plots <- list()
+for(type in c("original", "gaussNorm", "normalized", "adapted")){
+  p <- ggplot(data.frame(validation_data,
+                         frequencies[[type]],
+                         mfis[[type]],
+                         check.names = FALSE) %>% 
+                dplyr::filter(Timepoint %in% c("1st\nTrimester", 
+                                               "2nd\nTrimester", 
+                                               "3rd\nTrimester"))) +
+    geom_point(aes_string(x = "weeks", y = "`CD4+Tcells_naive_STAT5_Unstim`", color = "Plate")) +
+    geom_line(aes_string(x = "weeks", y = "`CD4+Tcells_naive_STAT5_Unstim`", 
+                         group = "Plate", color = "Plate"))+
+    ggtitle(plot_titles[type]) +
+    ylim(0,1) +
+    theme_minimal() +
+    theme(legend.position = "none")
+  
+  plots[[length(plots)+1]] <- p
+}
+
+do.call(gridExtra::grid.arrange, 
+        c(plots,
+          list(nrow = 1)))
+```
+
+
+```{r fig.width=10}
+frequencies_longformat <- 
+          lapply(names(frequencies), function(type){
+            freq <- frequencies[[type]]
+            gather(data.frame(File = rownames(freq), 
+                              Cohort = validation_data[rownames(freq), "Cohort"],
+                              freq), 
+                   key = "Population", 
+                   value = !!paste0("Frequency_", type),
+                   - "File", - "Cohort")
+          })
+
+frequencies_longformat <- frequencies_longformat[[1]] %>% 
+  left_join(frequencies_longformat[[2]], by = c("File", "Cohort", "Population")) %>% 
+  left_join(frequencies_longformat[[3]], by = c("File", "Cohort", "Population")) %>% 
+  left_join(frequencies_longformat[[4]], by = c("File", "Cohort", "Population"))
+          
+          
+plots <- list()
+for(type in c("original", "gaussNorm", "normalized")){
+  plots[[paste0(type, "_cohort")]] <- ggplot(frequencies_longformat) +
+    geom_point(aes_string(x = "Frequency_adapted", 
+                          y = paste0("Frequency_", type),
+                          col = "Cohort")) +
+    ggtitle(plot_titles[type]) +
+    xlab("Frequency of manually adapted gates")+
+    ylab("Frequency of static gates") +
+    theme_minimal() +
+    theme(legend.position = "none")
+}
+
+p_freq <- do.call(gridExtra::grid.arrange, c(plots, list(nrow = 1)))
+
+ggsave(p_freq, filename = file.path(results,"frequencies.pdf"),
+       width = 9, height = 3)
+
+```
+
+```{r}
+ggsave(plot = do.call(gridExtra::grid.arrange, list(p_freq, p_mfi)),
+       filename = file.path(results, "Figure8.pdf"),
+       width = 12, height = 6)
+       
+```
+
+```{r}
+for(type in c("original", "gaussNorm", "normalized")){
+  p <- 
+    ggplot(frequencies_longformat %>% 
+             dplyr::filter(Population == "CD4.Tcells_naive_STAT5_Unstim"))+
+    geom_point(aes_string(x = "Frequency_adapted", 
+                          y = paste0("Frequency_", type),
+                          col = "Population")) +
+    theme_minimal() 
+  print(p)
+}
+```

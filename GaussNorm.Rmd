@@ -1,0 +1,111 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(flowCore))
+suppressPackageStartupMessages(library(flowStats))
+```
+
+```{r}
+results <- "validation_Gates/GaussNorm"
+if(!dir.exists(results)) dir.create(results, recursive = TRUE)
+
+norm_dir <- file.path(results, "Normalized")
+if(!dir.exists(norm_dir)) dir.create(norm_dir)
+
+
+files <- c(list.files("../data/Gates", pattern = "PTLG.*Unstim.*fcs$", full.names = TRUE),
+           list.files("../data/Gates_ExtraControls", pattern = "PTLG.*Unstim.*fcs$", full.names = TRUE))
+files <- grep(paste0(".*", c("PTLG015", "PTLG016", "PTLG006", "PTLG014", "PTLG023"), "_[123BU]",
+                     collapse = "|"),
+              files, 
+              invert = TRUE,
+              value = TRUE) 
+files <- grep("Unstim_Control_2",
+              files,
+              invert = TRUE,
+              value = TRUE)
+
+df <- data.frame(File = files,
+                 Plate = as.factor(str_match(files, "(PTLG[0-9]*)")[, 2]),
+                 Timepoint = as.factor(gsub("Unstim", "Control", str_match(files, "PTLG[0-9]*[_Repeat_]*_([^_]*)")[, 2])),
+                 stringsAsFactors = FALSE)
+rownames(df) <- df$File
+
+repeat_ctrl_file <- "../data/Gates/Gates_PTLG015_016_Repeats_Unstim_Control.fcs"
+df[repeat_ctrl_file, c("Plate","Timepoint")] <- c("PTLG015", "Control") 
+head(df)
+```
+
+```{r}
+train_data <- df %>% 
+  dplyr::filter(Timepoint == "Control")
+
+o <- capture.output(ff <- read.FCS(file.path(train_data$File[1])))
+
+norm_markers <- c(48, 46, 43, 45, 20, 16, 21, 19, 22, 50, 47, 40, 44, 33, 17,
+                  11, 18, 51, 14, 23, 32, 10, 49, 27, 24, 31, 42, 37, 39, 34, 
+                  41, 26, 30, 28, 29, 25, 35)
+channels <- colnames(ff)[norm_markers]
+
+transformList <- transformList(colnames(ff)[norm_markers], 
+                               cytofTransform)
+transformList.reverse <- transformList(colnames(ff)[norm_markers], 
+                                       cytofTransform.reverse)
+```
+
+
+Train landmarks on first control file as reference
+```{r}
+ff <- read.FCS(train_data %>% 
+                 dplyr::filter(Plate == "PTLG001") %>% 
+                 dplyr::pull(File))
+
+ff <- transform(ff, transformList)
+
+remb.flowset <- flowStats:::remBoundary(flowset = flowSet(ff), 
+                                       channel.names = channels)
+max.lms <- rep(2, length(channels))
+names(max.lms) <- channels
+
+lms <- flowStats:::extract.landmarks(flowset = remb.flowset$res, 
+                                     expr.list = 1, 
+                                     channel.names = channels, 
+                                     max.lms = max.lms, 
+                                     peak.density.thr = 0.05, 
+                                     peak.distance.thr = 0.05)
+
+base.lms <- flowStats:::extract.base.landmarks(lms$filter, 
+                                               channels, 
+                                               max.lms)
+```
+
+```{r}
+validation_data <- df %>% 
+  dplyr::filter(Timepoint != "Control")
+
+validation_data$Cohort <- stringr::str_match(validation_data$File, 
+                                             "/(Gates[^/]*)/")[,2]
+
+rownames(validation_data) <- gsub(".*/", "", validation_data$File)
+
+validation_data$Plate[validation_data$Plate == "PTLG016"] <- "PTLG015"
+```
+
+```{r}
+for(i in seq_len(nrow(validation_data))){
+  file <- validation_data$File[i]
+  ff <- read.FCS(file)
+  ff <- transform(ff, transformList)
+  gauss_res <- gaussNorm(flowset = flowSet(ff), 
+                    channel.names = channels, 
+                    base.lms = base.lms)
+  ff_n <- gauss_res$flowset[[1]]
+  ff_n <- transform(ff_n, transformList.reverse)
+  write.FCS(ff_n, 
+            filename = file.path(norm_dir, 
+                                 paste0("Norm_", gsub(".*/", "", file))))
+}
+```

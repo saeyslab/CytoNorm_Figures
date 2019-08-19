@@ -29,7 +29,7 @@ cell_types <- c("Naive CD4+ T cells" = "CD4+ T cells/CD45RA+ naive T cells",
                 "Memory CD8+ T cells" = "CD8+ T cells/CD45RA- mem T cells",
                 "NK cells" = "CD7+CD3-NKcells",
                 "B cells" = "B cells",
-                "Macrophages" = "lin-CD14+CD11b+CD33+MCs",
+                "Monocytes" = "lin-CD14+CD11b+CD33+MCs",
                 "pDCs" = "pDCs",
                 "CD66+CD45-" = "CD66+CD45-")
 ```
